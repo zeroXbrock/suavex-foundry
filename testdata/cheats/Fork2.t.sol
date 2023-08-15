@@ -185,7 +185,7 @@ contract ForkTest is DSTest {
         bytes32 withdrawalTopic = 0x7fcf532c15f0a6db0bd6d0e038bea71d30d808c7d98cb3bf7268a95bf5081b65;
         uint256 blockNumber = 17623835;
 
-        string memory path = "../testdata/fixtures/Rpc/eth_getLogs.json";
+        string memory path = "fixtures/Rpc/eth_getLogs.json";
         string memory file = vm.readFile(path);
         bytes memory parsed = vm.parseJson(file);
         EthGetLogsJsonParseable[] memory fixtureLogs = abi.decode(parsed, (EthGetLogsJsonParseable[]));
