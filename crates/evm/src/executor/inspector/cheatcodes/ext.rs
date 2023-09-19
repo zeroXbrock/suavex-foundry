@@ -5,12 +5,13 @@ use ethers::{
     prelude::artifacts::CompactContractBytecode,
     types::*,
 };
-use foundry_common::{fmt::*, fs, get_artifact_path};
+use foundry_common::{fmt::*, fs, get_artifact_path, shell};
 use foundry_config::fs_permissions::FsAccessKind;
 use revm::{Database, EVMData};
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::BTreeMap, env, path::Path, process::Command};
+use yansi::Paint;
 
 /// Invokes a `Command` with the given args and returns the exit code, stdout, and stderr.
 ///
@@ -508,7 +509,7 @@ fn sleep(milliseconds: &U256) -> Result {
 }
 
 /// Skip the current test, by returning a magic value that will be checked by the test runner.
-pub fn skip(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
+pub fn skip_test(state: &mut Cheatcodes, depth: u64, skip: bool) -> Result {
     if !skip {
         return Ok(b"".into())
     }
@@ -714,7 +715,11 @@ pub fn apply<DB: Database>(
         HEVMCalls::WriteJson0(inner) => write_json(state, &inner.0, &inner.1, None),
         HEVMCalls::WriteJson1(inner) => write_json(state, &inner.0, &inner.1, Some(&inner.2)),
         HEVMCalls::KeyExists(inner) => key_exists(&inner.0, &inner.1),
-        HEVMCalls::Skip(inner) => skip(state, data.journaled_state.depth(), inner.0),
+        HEVMCalls::SkipTest(inner) => skip_test(state, data.journaled_state.depth(), inner.0),
+        HEVMCalls::Skip(inner) => {
+            let _ = shell::println(Paint::yellow("Warning! This cheatcode is deprecated and will be removed in the future. Use `vm.skipTest` instead."));
+            skip_test(state, data.journaled_state.depth(), inner.0)
+        }
         _ => return None,
     })
 }
