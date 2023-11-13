@@ -1,9 +1,9 @@
-Compiling 2 files with 0.8.23
-Solc 0.8.23 finished in 424.55ms
+Compiling 2 files with $SOLC_VERSION
+Solc $SOLC_VERSION finished in $TIME
 Compiler run successful!
 
 Running 1 test for src/ATest.t.sol:ATest
 [PASS] testExample() (gas: 168)
-Test result: ok. 1 passed; 0 failed; 0 skipped; finished in 4.42ms
+Test result: ok. 1 passed; 0 failed; 0 skipped; finished in $TIME
  
 Ran 1 test suites: 1 tests passed, 0 failed, 0 skipped (1 total tests)

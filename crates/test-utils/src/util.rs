@@ -10,6 +10,7 @@ use foundry_compilers::{
 use foundry_config::Config;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use regex::Regex;
 use std::{
     env,
@@ -890,46 +891,48 @@ pub trait OutputExt {
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>);
 }
 
-/// Patterns to remove from fixtures before comparing output
-///
-/// This should strip everything that can vary from run to run, like elapsed time, file paths
-static IGNORE_IN_FIXTURES: Lazy<Regex> = Lazy::new(|| {
-    let re = &[
-        // solc version
-        r" ?Solc(?: version)? \d+.\d+.\d+",
-        r" with \d+.\d+.\d+",
-        // solc runs
-        r"runs: \d+, μ: \d+, ~: \d+",
-        // elapsed time
-        "finished in .*?s",
-        // file paths
-        r"-->.*\.sol",
-        r"Location(.|\n)*\.rs(.|\n)*Backtrace",
-        // other
-        r"Transaction hash: 0x[0-9A-Fa-f]{64}",
-    ];
-    Regex::new(&format!("({})", re.join("|"))).unwrap()
-});
-
 fn normalize_output(s: &str) -> String {
-    let s = s.replace("\r\n", "\n").replace('\\', "/");
-    IGNORE_IN_FIXTURES.replace_all(&s, "").into_owned()
+    static RULES: Lazy<Vec<(Regex, &str)>> = Lazy::new(|| {
+        static RULES_RAW: &[(&str, &str)] = &[
+            (r"( )?Solc( version)? \d+.\d+.\d+", "${1}Solc$2 $$SOLC_VERSION"),
+            (r" with \d+.\d+.\d+", " with $$SOLC_VERSION"),
+            (r"runs: \d+, μ: \d+, ~: \d+", "runs: $$RUNS, μ: $$MEAN, ~: $$MEDIAN"),
+            (r"finished in (.*?s)", "finished in $$TIME"),
+            (r"-->\s*.*\.sol", "--> $$PATH.sol"),
+            (r"Transaction hash: 0x[0-9A-Fa-f]{64}", "Transaction hash: $$TX_HASH"),
+        ];
+        RULES_RAW.iter().map(|&(re, to)| (Regex::new(re).unwrap(), to)).collect()
+    });
+
+    let mut s = s.replace("\r\n", "\n").replace('\\', "/");
+    for (re, to) in RULES.iter() {
+        s = re.replace_all(&s, *to).into_owned();
+    }
+    s
 }
 
 impl OutputExt for Output {
     #[track_caller]
     fn stdout_matches_path(&self, expected_path: impl AsRef<Path>) {
-        let expected = fs::read_to_string(expected_path).unwrap();
-        let out = lossy_string(&self.stdout);
-        pretty_assertions::assert_eq!(normalize_output(&out), normalize_output(&expected));
+        matches_path(self, expected_path.as_ref(), true);
     }
 
     #[track_caller]
     fn stderr_matches_path(&self, expected_path: impl AsRef<Path>) {
-        let expected = fs::read_to_string(expected_path).unwrap();
-        let err = lossy_string(&self.stderr);
-        pretty_assertions::assert_eq!(normalize_output(&err), normalize_output(&expected));
+        matches_path(self, expected_path.as_ref(), false);
     }
+}
+
+#[track_caller]
+fn matches_path(output: &Output, path: &Path, stdout: bool) {
+    let expected = fs::read_to_string(path).unwrap();
+    let expected_n = normalize_output(&expected);
+    if expected != expected_n {
+        fs::write(path, expected_n.as_bytes()).unwrap();
+    }
+
+    let s = lossy_string(if stdout { &output.stdout } else { &output.stderr });
+    assert_eq!(normalize_output(&s), expected_n);
 }
 
 /// Returns the fixture path depending on whether the current terminal is tty
@@ -965,6 +968,7 @@ fn lossy_string(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pretty_assertions::assert_eq;
 
     #[test]
     fn tty_path_works() {
@@ -977,14 +981,23 @@ mod tests {
     }
 
     #[test]
-    fn fixture_regex_matches() {
-        assert!(IGNORE_IN_FIXTURES.is_match(
-            r"
-Location:
-   [35mcli/src/compile.rs[0m:[35m151[0m
-
-Backtrace omitted.
-        "
-        ));
+    fn normalizes_output() {
+        let s = "
+Compiling 22 files with 0.8.23
+Solc 0.8.23 finished in 1.95s
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+Transaction hash: 0x4c3d9f7c4cc26876b43a11ba7ff218374471786a8ae8bf5574deb1d97fc1e851
+";
+        let expected = "
+Compiling 22 files with $SOLC_VERSION
+Solc $SOLC_VERSION finished in $TIME
+Compiler run successful!
+Deployer: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+Deployed to: 0x5FbDB2315678afecb367f032d93F642f64180aa3
+Transaction hash: $TX_HASH
+";
+        assert_eq!(normalize_output(s), expected);
     }
 }
