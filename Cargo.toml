@@ -160,6 +160,8 @@ syn-solidity = "0.4.1"
 alloy-providers = { path = "../../alloy-rs/alloy/crates/providers" }
 alloy-transport = { path = "../../alloy-rs/alloy/crates/transport" }
 alloy-transport-http = { path = "../../alloy-rs/alloy/crates/transport-http" }
+alloy-transport-ws = { path = "../../alloy-rs/alloy/crates/transport-ws" }
+alloy-pubsub = { path = "../../alloy-rs/alloy/crates/pubsub" }
 alloy-rpc-types = { path = "../../alloy-rs/alloy/crates/rpc-types" }
 
 alloy-chains = "0.1.2"

@@ -3,8 +3,10 @@
 use crate::{ALCHEMY_FREE_TIER_CUPS, REQUEST_TIMEOUT};
 use alloy_primitives::U256;
 use alloy_providers::provider::{Provider, TempProvider};
+use alloy_pubsub::PubSubConnect;
 use alloy_transport::{Authorization, BoxTransport, Transport};
 use alloy_transport_http::Http;
+use alloy_transport_ws::WsConnect;
 use ethers_middleware::gas_oracle::{GasCategory, GasOracle, Polygon};
 use ethers_providers::{JwtAuth, JwtKey};
 use eyre::{Result, WrapErr};
@@ -203,7 +205,7 @@ impl ProviderBuilder {
     /// Same as [`Self:build()`] but also retrieves the `chainId` in order to derive an appropriate
     /// interval.
     pub async fn connect(self) -> Result<RetryProvider> {
-        let provider = self.build()?;
+        let provider = self.build().await?;
         // todo: port poll interval hint
         /*if let Some(blocktime) = provider.get_chainid().await.ok().and_then(|id| {
         }) {
@@ -231,6 +233,9 @@ impl ProviderBuilder {
         // todo: ws
         // todo: port alchemy compute units logic?
         // todo: provider polling interval
+
+        // todo: create a `Transport` that wraps the inner transports and e.g. calls connect on the
+        // ws transport -.-
         let transport = match url.scheme() {
             "http" | "https" => {
                 let mut client_builder = reqwest::Client::builder().timeout(self.timeout);
@@ -254,6 +259,10 @@ impl ProviderBuilder {
 
                 // todo: retry tower layer
                 Http::with_client(client, url).boxed()
+            }
+            "ws" | "wss" => {
+                //WsConnect { url: url.to_string(), auth: None }.into_service().await?.boxed()
+                todo!()
             }
             _ => unimplemented!(),
         };
