@@ -1,16 +1,15 @@
 import json
-from enum import Enum
-from types import SimpleNamespace
+from enum import Enum as PyEnum
 
 
-class Status(Enum):
+class Status(PyEnum):
     STABLE: str = "stable"
     EXPERIMENTAL: str = "experimental"
     DEPRECATED: str = "deprecated"
     REMOVED: str = "removed"
 
 
-class Group(Enum):
+class Group(PyEnum):
     EVM: str = "evm"
     TESTING: str = "testing"
     SCRIPTING: str = "scripting"
@@ -21,22 +20,19 @@ class Group(Enum):
     UTILITIES: str = "utilities"
 
 
-class Safety(Enum):
+class Safety(PyEnum):
     UNSAFE: str = "unsafe"
     SAFE: str = "safe"
 
-    def is_safe(self) -> bool:
-        return self == Safety.SAFE
 
-
-class Visibility(Enum):
+class Visibility(PyEnum):
     EXTERNAL: str = "external"
     PUBLIC: str = "public"
     INTERNAL: str = "internal"
     PRIVATE: str = "private"
 
 
-class Mutability(Enum):
+class Mutability(PyEnum):
     PURE: str = "pure"
     VIEW: str = "view"
     NONE: str = ""
@@ -72,6 +68,19 @@ class Function:
         self.selector = selector
         self.selector_bytes = selector_bytes
 
+    @staticmethod
+    def from_dict(d: dict) -> "Function":
+        return Function(
+            d["id"],
+            d["description"],
+            d["declaration"],
+            Visibility(d["visibility"]),
+            Mutability(d["mutability"]),
+            d["signature"],
+            d["selector"],
+            bytes(d["selectorBytes"]),
+        )
+
 
 class Cheatcode:
     func: Function
@@ -85,6 +94,15 @@ class Cheatcode:
         self.status = status
         self.safety = safety
 
+    @staticmethod
+    def from_dict(d: dict) -> "Cheatcode":
+        return Cheatcode(
+            Function.from_dict(d["func"]),
+            Group(d["group"]),
+            Status(d["status"]),
+            Safety(d["safety"]),
+        )
+
 
 class Error:
     name: str
@@ -96,6 +114,10 @@ class Error:
         self.description = description
         self.declaration = declaration
 
+    @staticmethod
+    def from_dict(d: dict) -> "Error":
+        return Error(**d)
+
 
 class Event:
     name: str
@@ -106,6 +128,10 @@ class Event:
         self.name = name
         self.description = description
         self.declaration = declaration
+
+    @staticmethod
+    def from_dict(d: dict) -> "Event":
+        return Event(**d)
 
 
 class EnumVariant:
@@ -126,6 +152,14 @@ class Enum:
         self.name = name
         self.description = description
         self.variants = variants
+
+    @staticmethod
+    def from_dict(d: dict) -> "Enum":
+        return Enum(
+            d["name"],
+            d["description"],
+            list(map(lambda v: EnumVariant(**v), d["variants"])),
+        )
 
 
 class StructField:
@@ -148,6 +182,14 @@ class Struct:
         self.name = name
         self.description = description
         self.fields = fields
+
+    @staticmethod
+    def from_dict(d: dict) -> "Struct":
+        return Struct(
+            d["name"],
+            d["description"],
+            list(map(lambda f: StructField(**f), d["fields"])),
+        )
 
 
 class Cheatcodes:
@@ -172,10 +214,20 @@ class Cheatcodes:
         self.cheatcodes = cheatcodes
 
     @staticmethod
-    def from_json_file(file_path: str):
+    def from_dict(d: dict) -> "Cheatcodes":
+        return Cheatcodes(
+            errors=[Error.from_dict(e) for e in d["errors"]],
+            events=[Event.from_dict(e) for e in d["events"]],
+            enums=[Enum.from_dict(e) for e in d["enums"]],
+            structs=[Struct.from_dict(e) for e in d["structs"]],
+            cheatcodes=[Cheatcode.from_dict(e) for e in d["cheatcodes"]],
+        )
+
+    @staticmethod
+    def from_json(s) -> "Cheatcodes":
+        return Cheatcodes.from_dict(json.loads(s))
+
+    @staticmethod
+    def from_json_file(file_path: str) -> "Cheatcodes":
         with open(file_path, "r") as f:
-            return json.load(f, object_hook=lambda d: SimpleNamespace(**d))
-
-
-cheatcodes = Cheatcodes.from_json_file("crates/cheatcodes/assets/cheatcodes.json")
-print(cheatcodes)
+            return Cheatcodes.from_dict(json.load(f))
