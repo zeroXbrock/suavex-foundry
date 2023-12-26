@@ -219,6 +219,7 @@ impl FromStr for SnapshotEntry {
                                 signature: sig.as_str().to_string(),
                                 gas_used: TestKindReport::Standard {
                                     gas: gas.as_str().parse().unwrap(),
+                                    memory: 0,
                                 },
                             })
                         } else if let Some(runs) = cap.name("runs") {
@@ -458,7 +459,7 @@ mod tests {
             SnapshotEntry {
                 contract_name: "Test".to_string(),
                 signature: "deposit()".to_string(),
-                gas_used: TestKindReport::Standard { gas: 7222 }
+                gas_used: TestKindReport::Standard { gas: 7222, memory: 0 }
             }
         );
     }

@@ -673,6 +673,8 @@ pub struct CallResult {
     pub env: Env,
     /// breakpoints
     pub breakpoints: Breakpoints,
+    /// Max memory used.
+    pub memory: u64,
 }
 
 /// The result of a raw call.
@@ -722,6 +724,8 @@ pub struct RawCallResult {
     pub out: Option<Output>,
     /// The chisel state
     pub chisel_state: Option<(Stack, Vec<u8>, InstructionResult)>,
+    /// The max memory used.
+    pub memory: u64,
 }
 
 impl Default for RawCallResult {
@@ -746,6 +750,7 @@ impl Default for RawCallResult {
             cheatcodes: Default::default(),
             out: None,
             chisel_state: None,
+            memory: 0,
         }
     }
 }
@@ -792,6 +797,7 @@ fn convert_executed_result(
         cheatcodes,
         script_wallets,
         chisel_state,
+        memory,
     } = inspector.collect();
 
     let transactions = match cheatcodes.as_ref() {
@@ -821,6 +827,7 @@ fn convert_executed_result(
         cheatcodes,
         out,
         chisel_state,
+        memory,
     })
 }
 
@@ -845,6 +852,7 @@ fn convert_call_result(
         state_changeset,
         script_wallets,
         env,
+        memory,
         ..
     } = call_result;
 
@@ -880,6 +888,7 @@ fn convert_call_result(
                 env,
                 breakpoints,
                 skipped: false,
+                memory,
             })
         }
         _ => {

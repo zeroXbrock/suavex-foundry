@@ -182,7 +182,7 @@ impl TestResult {
 /// Data report by a test.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TestKindReport {
-    Standard { gas: u64 },
+    Standard { gas: u64, memory: u64 },
     Fuzz { runs: usize, mean_gas: u64, median_gas: u64 },
     Invariant { runs: usize, calls: usize, reverts: usize },
 }
@@ -190,8 +190,8 @@ pub enum TestKindReport {
 impl fmt::Display for TestKindReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            TestKindReport::Standard { gas } => {
-                write!(f, "(gas: {gas})")
+            TestKindReport::Standard { gas, memory } => {
+                write!(f, "(gas: {gas}, memory: {memory})")
             }
             TestKindReport::Fuzz { runs, mean_gas, median_gas } => {
                 write!(f, "(runs: {runs}, μ: {mean_gas}, ~: {median_gas})")
@@ -207,7 +207,7 @@ impl TestKindReport {
     /// Returns the main gas value to compare against
     pub fn gas(&self) -> u64 {
         match self {
-            TestKindReport::Standard { gas } => *gas,
+            TestKindReport::Standard { gas, memory: _ } => *gas,
             // We use the median for comparisons
             TestKindReport::Fuzz { median_gas, .. } => *median_gas,
             // We return 0 since it's not applicable
@@ -222,7 +222,7 @@ pub enum TestKind {
     /// A standard test that consists of calling the defined solidity function
     ///
     /// Holds the consumed gas
-    Standard(u64),
+    Standard(u64, u64),
     /// A solidity fuzz test, that stores all test cases
     Fuzz {
         /// we keep this for the debugger
@@ -237,7 +237,7 @@ pub enum TestKind {
 
 impl Default for TestKind {
     fn default() -> Self {
-        Self::Standard(0)
+        Self::Standard(0, 0)
     }
 }
 
@@ -245,7 +245,9 @@ impl TestKind {
     /// The gas consumed by this test
     pub fn report(&self) -> TestKindReport {
         match self {
-            TestKind::Standard(gas) => TestKindReport::Standard { gas: *gas },
+            TestKind::Standard(gas, memory) => {
+                TestKindReport::Standard { gas: *gas, memory: *memory }
+            }
             TestKind::Fuzz { runs, mean_gas, median_gas, .. } => {
                 TestKindReport::Fuzz { runs: *runs, mean_gas: *mean_gas, median_gas: *median_gas }
             }

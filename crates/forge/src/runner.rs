@@ -231,7 +231,7 @@ impl<'a> ContractRunner<'a> {
                         counterexample: None,
                         decoded_logs: decode_console_logs(&setup.logs),
                         logs: setup.logs,
-                        kind: TestKind::Standard(0),
+                        kind: TestKind::Standard(0, 0),
                         traces: setup.traces,
                         coverage: setup.coverage,
                         labeled_addresses: setup.labeled_addresses,
@@ -313,7 +313,7 @@ impl<'a> ContractRunner<'a> {
         let mut executor = self.executor.clone();
         let start = Instant::now();
         let debug_arena;
-        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints) =
+        let (reverted, reason, gas, stipend, coverage, state_changeset, breakpoints, memory) =
             match executor.execute_test::<_, _>(
                 self.sender,
                 address,
@@ -333,6 +333,7 @@ impl<'a> ContractRunner<'a> {
                     state_changeset,
                     debug,
                     breakpoints,
+                    memory,
                     ..
                 }) => {
                     traces.extend(execution_trace.map(|traces| (TraceKind::Execution, traces)));
@@ -341,7 +342,7 @@ impl<'a> ContractRunner<'a> {
                     debug_arena = debug;
                     coverage = merge_coverages(coverage, execution_coverage);
 
-                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints)
+                    (reverted, None, gas, stipend, coverage, state_changeset, breakpoints, memory)
                 }
                 Err(EvmError::Execution(err)) => {
                     traces.extend(err.traces.map(|traces| (TraceKind::Execution, traces)));
@@ -356,6 +357,7 @@ impl<'a> ContractRunner<'a> {
                         None,
                         err.state_changeset,
                         HashMap::new(),
+                        0,
                     )
                 }
                 Err(EvmError::SkipError) => {
@@ -365,7 +367,7 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&logs),
                         traces,
                         labeled_addresses,
-                        kind: TestKind::Standard(0),
+                        kind: TestKind::Standard(0, 0),
                         ..Default::default()
                     }
                 }
@@ -376,7 +378,7 @@ impl<'a> ContractRunner<'a> {
                         decoded_logs: decode_console_logs(&logs),
                         traces,
                         labeled_addresses,
-                        kind: TestKind::Standard(0),
+                        kind: TestKind::Standard(0, 0),
                         ..Default::default()
                     }
                 }
@@ -407,7 +409,7 @@ impl<'a> ContractRunner<'a> {
             counterexample: None,
             decoded_logs: decode_console_logs(&logs),
             logs,
-            kind: TestKind::Standard(gas.overflowing_sub(stipend).0),
+            kind: TestKind::Standard(gas.overflowing_sub(stipend).0, memory),
             traces,
             coverage,
             labeled_addresses,
@@ -577,7 +579,7 @@ impl<'a> ContractRunner<'a> {
                 decoded_logs: decode_console_logs(&logs),
                 traces,
                 labeled_addresses,
-                kind: TestKind::Standard(0),
+                kind: TestKind::Standard(0, 0),
                 debug,
                 breakpoints,
                 coverage,
