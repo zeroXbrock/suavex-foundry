@@ -25,6 +25,7 @@ impl ContractsByArtifact {
     pub fn find_by_code(&self, code: &[u8]) -> Option<ArtifactWithContractRef> {
         self.iter().find(|(_, (_, known_code))| diff_score(known_code, code) < 0.1)
     }
+
     /// Finds a contract which has the same contract name or identifier as `id`. If more than one is
     /// found, return error.
     pub fn find_by_name_or_identifier(
@@ -48,18 +49,14 @@ impl ContractsByArtifact {
         let flattened_funcs: BTreeMap<[u8; 4], Function> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
-                abi.functions()
-                    .map(|func| (func.selector().into(), func.clone()))
-                    .collect::<BTreeMap<[u8; 4], Function>>()
+                abi.functions().map(|func| (func.selector().into(), func.clone()))
             })
             .collect();
 
         let flattened_events: BTreeMap<B256, Event> = self
             .iter()
             .flat_map(|(_name, (abi, _code))| {
-                abi.events()
-                    .map(|event| (event.selector(), event.clone()))
-                    .collect::<BTreeMap<B256, Event>>()
+                abi.events().map(|event| (event.selector(), event.clone()))
             })
             .collect();
 

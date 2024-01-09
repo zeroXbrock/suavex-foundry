@@ -334,7 +334,7 @@ impl CoverageArgs {
             // TODO: Note down failing tests
             if let Some(source_id) = report.get_source_id(
                 artifact_id.version.clone(),
-                artifact_id.source.to_string_lossy().to_string(),
+                artifact_id.source.to_string_lossy().into_owned(),
             ) {
                 let source_id = *source_id;
                 // TODO: Distinguish between creation/runtime in a smart way
@@ -344,8 +344,8 @@ impl CoverageArgs {
                         source_id,
                         contract_name: artifact_id.name.clone(),
                     },
-                    &hits,
-                )?;
+                    hits,
+                );
             }
         }
 
@@ -362,13 +362,13 @@ impl CoverageArgs {
             match report_kind {
                 CoverageReportKind::Summary => SummaryReporter::default().report(&report),
                 CoverageReportKind::Lcov => {
-                    if let Some(report_file) = self.report_file {
-                        return LcovReporter::new(&mut fs::create_file(root.join(report_file))?)
-                            .report(&report)
+                    let out_path = if let Some(report_file) = &self.report_file {
+                        root.join(report_file)
                     } else {
-                        return LcovReporter::new(&mut fs::create_file(root.join("lcov.info"))?)
-                            .report(&report)
-                    }
+                        root.join("lcov.info")
+                    };
+                    let mut file = fs::create_file(out_path)?;
+                    return LcovReporter::new(&mut file).report(&report);
                 }
                 CoverageReportKind::Bytecode => {
                     let destdir = root.join("bytecode-coverage");

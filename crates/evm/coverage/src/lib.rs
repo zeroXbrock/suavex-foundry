@@ -11,12 +11,10 @@ use alloy_primitives::{Bytes, B256};
 use foundry_compilers::sourcemap::SourceElement;
 use semver::Version;
 use std::{
-    collections::{BTreeMap, HashMap},
+    collections::{hash_map::Entry, BTreeMap, HashMap},
     fmt::Display,
     ops::{AddAssign, Deref, DerefMut},
 };
-
-use eyre::{Context, Result};
 
 pub mod analysis;
 pub mod anchors;
@@ -124,18 +122,16 @@ impl CoverageReport {
     ///
     /// This function should only be called *after* all the relevant sources have been processed and
     /// added to the map (see [add_source]).
-    pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: &HitMap) -> Result<()> {
+    pub fn add_hit_map(&mut self, contract_id: &ContractId, hit_map: HitMap) {
         // Add bytecode level hits
-        let e = self
-            .bytecode_hits
-            .entry(contract_id.clone())
-            .or_insert_with(|| HitMap::new(hit_map.bytecode.clone()));
-        e.merge(hit_map).context(format!(
-            "contract_id {:?}, hash {}, hash {}",
-            contract_id,
-            e.bytecode.clone(),
-            hit_map.bytecode.clone(),
-        ))?;
+        let hit_map = match self.bytecode_hits.entry(contract_id.clone()) {
+            Entry::Occupied(entry) => {
+                let entry = entry.into_mut();
+                entry.merge(&hit_map);
+                entry
+            }
+            Entry::Vacant(entry) => entry.insert(hit_map),
+        };
 
         // Add source level hits
         if let Some(anchors) = self.anchors.get(contract_id) {
@@ -149,7 +145,6 @@ impl CoverageReport {
                 }
             }
         }
-        Ok(())
     }
 }
 
@@ -204,26 +199,11 @@ impl HitMap {
         *self.hits.entry(pc).or_default() += 1;
     }
 
-    /// Merge another hitmap into this, assuming the bytecode is consistent
-    pub fn merge(&mut self, other: &HitMap) -> Result<(), eyre::Report> {
-        for (pc, hits) in &other.hits {
-            *self.hits.entry(*pc).or_default() += hits;
+    /// Merge another hitmap into this, assuming the bytecode is the same.
+    pub fn merge(&mut self, other: &HitMap) {
+        for (&pc, &hits) in &other.hits {
+            *self.hits.entry(pc).or_default() += hits;
         }
-        Ok(())
-    }
-
-    pub fn consistent_bytecode(&self, hm1: &HitMap, hm2: &HitMap) -> bool {
-        // Consider the bytecodes consistent if they are the same out as far as the
-        // recorded hits
-        let len1 = hm1.hits.last_key_value();
-        let len2 = hm2.hits.last_key_value();
-        if let (Some(len1), Some(len2)) = (len1, len2) {
-            let len = std::cmp::max(len1.0, len2.0);
-            let ok = hm1.bytecode.0[..*len] == hm2.bytecode.0[..*len];
-            println!("consistent_bytecode: {}, {}, {}, {}", ok, len1.0, len2.0, len);
-            return ok;
-        }
-        true
     }
 }
 
