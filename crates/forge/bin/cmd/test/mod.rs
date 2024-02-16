@@ -33,7 +33,7 @@ use foundry_config::{
 };
 use foundry_debugger::Debugger;
 use regex::Regex;
-use std::{collections::BTreeMap, fs, sync::mpsc::channel};
+use std::{fs, sync::mpsc::channel, time::Instant};
 use watchexec::config::{InitConfig, RuntimeConfig};
 use yansi::Paint;
 
@@ -309,6 +309,7 @@ impl TestArgs {
 
         // Run tests.
         let (tx, rx) = channel::<(String, SuiteResult)>();
+        let timer = Instant::now();
         let handle = tokio::task::spawn({
             let filter = filter.clone();
             async move { runner.test(&filter, tx, test_options).await }
@@ -432,6 +433,7 @@ impl TestArgs {
                 break;
             }
         }
+        let duration = timer.elapsed();
 
         trace!(target: "forge::test", len=outcome.results.len(), %any_test_failed, "done with results");
 
@@ -442,7 +444,7 @@ impl TestArgs {
         }
 
         if !outcome.results.is_empty() {
-            shell::println(outcome.summary())?;
+            shell::println(outcome.summary(duration))?;
 
             if self.summary {
                 let mut summary_table = TestSummaryReporter::new(self.detailed);
@@ -528,7 +530,7 @@ fn list(
             }
         }
     }
-    Ok(TestOutcome::new(BTreeMap::new(), false))
+    Ok(TestOutcome::empty(false))
 }
 
 #[cfg(test)]

@@ -42,7 +42,7 @@ impl TestOutcome {
 
     /// Creates a new empty test outcome.
     pub fn empty(allow_failure: bool) -> Self {
-        Self { results: BTreeMap::new(), allow_failure, decoder: None }
+        Self::new(BTreeMap::new(), allow_failure)
     }
 
     /// Returns an iterator over all individual succeeding tests and their names.
@@ -112,13 +112,15 @@ impl TestOutcome {
         self.failures().count()
     }
 
-    /// Calculates the total duration of all test suites.
-    pub fn duration(&self) -> Duration {
+    /// Sums up all the durations of all individual test suites.
+    ///
+    /// Note that this is not necessarily the wall clock time of the entire test run.
+    pub fn full_duration(&self) -> Duration {
         self.results.values().map(|suite| suite.duration).sum()
     }
 
     /// Formats the aggregated summary of all test suites into a string (for printing).
-    pub fn summary(&self) -> String {
+    pub fn summary(&self, wall_clock_time: Duration) -> String {
         let num_test_suites = self.results.len();
         let suites = if num_test_suites == 1 { "suite" } else { "suites" };
         let total_passed = self.passed();
@@ -126,10 +128,11 @@ impl TestOutcome {
         let total_skipped = self.skipped();
         let total_tests = total_passed + total_failed + total_skipped;
         format!(
-            "\nRan {} test {} in {:.2?}: {} tests passed, {} failed, {} skipped ({} total tests)",
+            "\nRan {} test {} in {:.2?} ({:.2?} in total): {} tests passed, {} failed, {} skipped ({} total tests)",
             num_test_suites,
             suites,
-            self.duration(),
+            wall_clock_time,
+            self.full_duration(),
             Paint::green(total_passed),
             Paint::red(total_failed),
             Paint::yellow(total_skipped),
