@@ -2224,10 +2224,6 @@ impl EthApi {
                 if hash.len() % 2 != 0 {
                     hash = format!("0{}", hash);
                 }
-                debug!("r: {:?}", r);
-                debug!("s: {:?}", s);
-                debug!("v: {:?}", v);
-                debug!("hash: {:?}", hash);
 
                 let r = r.parse::<FixedBytes<32>>().unwrap();
                 let s = s.parse::<FixedBytes<32>>().unwrap();
@@ -2238,7 +2234,6 @@ impl EthApi {
 
                 let signature =
                     alloy_primitives::Signature::from_scalars_and_parity(r, s, v % 2).unwrap();
-                debug!("signature: {:?}", signature);
 
                 let to_legacy = |tx: &TransactionRequest| TxLegacy {
                     chain_id: tx.chain_id.map(|cid| cid.to::<u64>()),
