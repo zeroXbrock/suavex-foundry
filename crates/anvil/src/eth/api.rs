@@ -2173,6 +2173,123 @@ impl EthApi {
         Ok(PoolTxsAndFees { transactions, fees })
     }
 
+    fn validate_signed_request(&self, tx: &TransactionRequest) -> Result<TypedTransaction> {
+        // TransactionRequest puts these in the 'other' field
+        let mut r =
+            tx.other.get("r").ok_or(BlockchainError::FailedToDecodeSignedTransaction)?.to_string();
+        let mut s =
+            tx.other.get("s").ok_or(BlockchainError::FailedToDecodeSignedTransaction)?.to_string();
+        let mut v =
+            tx.other.get("v").ok_or(BlockchainError::FailedToDecodeSignedTransaction)?.to_string();
+        let mut hash = tx
+            .other
+            .get("hash")
+            .ok_or(BlockchainError::FailedToDecodeSignedTransaction)?
+            .to_string();
+        // strip quotes & leading 0x
+        r = r[3..(r.length() - 3)].to_string();
+        s = s[3..(s.length() - 3)].to_string();
+        v = v[3..(v.length() - 2)].to_string();
+        hash = hash[3..(hash.length() - 3)].to_string();
+        // make sure all values are even-length
+        let pad_zero = |x: &mut String| {
+            if x.len() % 2 != 0 {
+                *x = format!("0{}", x);
+            }
+        };
+        pad_zero(&mut r);
+        pad_zero(&mut s);
+        pad_zero(&mut v);
+        pad_zero(&mut hash);
+
+        let r = r
+            .parse::<FixedBytes<32>>()
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let s = s
+            .parse::<FixedBytes<32>>()
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let v = u64::from_str_radix(&v, 16)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let hash = hash
+            .parse::<FixedBytes<32>>()
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+
+        let to_legacy = |txn: &TransactionRequest| TxLegacy {
+            chain_id: txn.chain_id.map(|cid| cid.to::<u64>()),
+            nonce: txn.nonce.unwrap_or_default().to::<u64>(),
+            gas_price: txn.gas_price.unwrap_or_default().to::<u128>(),
+            gas_limit: txn.gas.unwrap_or_default().to::<u64>(),
+            to: match txn.to {
+                Some(to) => TxKind::Call(to),
+                None => TxKind::Create,
+            },
+            value: txn.value.unwrap_or_default(),
+            input: txn.input.input.to_owned().unwrap_or_default(),
+        };
+        let to_eip2930 = |txn: &TransactionRequest| TxEip2930 {
+            chain_id: txn.chain_id.unwrap_or_default().to::<u64>(),
+            nonce: txn.nonce.unwrap_or_default().to::<u64>(),
+            gas_price: txn.gas_price.unwrap_or_default().to::<u128>(),
+            gas_limit: txn.gas.unwrap_or_default().to::<u64>(),
+            to: match txn.to {
+                Some(to) => TxKind::Call(to),
+                None => TxKind::Create,
+            },
+            value: txn.value.unwrap_or_default(),
+            input: txn.input.input.to_owned().unwrap_or_default(),
+            access_list: alloy_eips::eip2930::AccessList(
+                txn.access_list
+                    .to_owned()
+                    .unwrap_or_default()
+                    .0
+                    .iter()
+                    .map(|a| alloy_eips::eip2930::AccessListItem {
+                        address: a.address,
+                        storage_keys: a.storage_keys.to_owned(),
+                    })
+                    .collect(),
+            ),
+        };
+        let to_eip1559 = |tx: &TransactionRequest| TxEip1559 {
+            chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
+            nonce: tx.nonce.unwrap_or_default().to::<u64>(),
+            gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
+            max_fee_per_gas: tx.max_fee_per_gas.unwrap_or_default().to::<u128>(),
+            max_priority_fee_per_gas: tx.max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
+            to: match tx.to {
+                Some(to) => TxKind::Call(to),
+                None => TxKind::Create,
+            },
+            value: tx.value.unwrap_or_default(),
+            input: tx.input.input.to_owned().unwrap_or_default(),
+            access_list: alloy_eips::eip2930::AccessList(
+                tx.access_list
+                    .to_owned()
+                    .unwrap_or_default()
+                    .0
+                    .iter()
+                    .map(|a| alloy_eips::eip2930::AccessListItem {
+                        address: a.address,
+                        storage_keys: a.storage_keys.to_owned(),
+                    })
+                    .collect(),
+            ),
+        };
+        // TODO: simplify this...
+
+        Ok(alloy_primitives::Signature::from_scalars_and_parity(r, s, v % 2).map(|sig| match tx
+            .transaction_type
+        {
+            None => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, hash)),
+            Some(n) => match n.to::<u64>() {
+                0 => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, hash)),
+                1 => TypedTransaction::EIP2930(Signed::new_unchecked(to_eip2930(tx), sig, hash)),
+                2 => TypedTransaction::EIP1559(Signed::new_unchecked(to_eip1559(tx), sig, hash)),
+                _ => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, hash)),
+            },
+        })?)
+    }
+
     /// eth_call for SUAVE MEVM.
     /// Returns base64-encoded bytestring.
     pub async fn suavex_call(&self, contract_address: Address, calldata: String) -> Result<String> {
@@ -2198,147 +2315,14 @@ impl EthApi {
         /*
             TODO: there must be a better way to do this
         */
-        let txs: Vec<Option<TypedTransaction>> = txs
-            .iter()
-            .map(|tx| {
-                // TransactionRequest puts these in the 'other' field
-                let mut r = tx.other.get("r").expect("r is required").to_string();
-                let mut s = tx.other.get("s").expect("s is required").to_string();
-                let mut v = tx.other.get("v").expect("v is required").to_string();
-                let mut hash = tx.other.get("hash").expect("hash is required").to_string();
-                // strip quotes & leading 0x
-                r = r[3..(r.length() - 3)].to_string();
-                s = s[3..(s.length() - 3)].to_string();
-                v = v[3..(v.length() - 2)].to_string();
-                hash = hash[3..(hash.length() - 3)].to_string();
-                // make sure all values are even-length
-                let pad_zero = |x: &mut String| {
-                    if x.len() % 2 != 0 {
-                        *x = format!("0{}", x);
-                    }
-                };
-                pad_zero(&mut r);
-                pad_zero(&mut s);
-                pad_zero(&mut v);
-                pad_zero(&mut hash);
-
-                let r = r.parse::<FixedBytes<32>>().unwrap_or_default();
-                let s = s.parse::<FixedBytes<32>>().unwrap_or_default();
-                let v = u64::from_str_radix(&v, 16).unwrap_or_default();
-                let hash = hash.parse::<FixedBytes<32>>().unwrap_or_default();
-
-                let to_legacy = |tx: &TransactionRequest| TxLegacy {
-                    chain_id: tx.chain_id.map(|cid| cid.to::<u64>()),
-                    nonce: tx.nonce.unwrap_or_default().to::<u64>(),
-                    gas_price: tx.gas_price.unwrap_or_default().to::<u128>(),
-                    gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
-                    to: match tx.to {
-                        Some(to) => TxKind::Call(to),
-                        None => TxKind::Create,
-                    },
-                    value: tx.value.unwrap_or_default(),
-                    input: tx.input.input.to_owned().unwrap_or_default(),
-                };
-                let to_eip2930 = |tx: &TransactionRequest| TxEip2930 {
-                    chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
-                    nonce: tx.nonce.unwrap_or_default().to::<u64>(),
-                    gas_price: tx.gas_price.unwrap_or_default().to::<u128>(),
-                    gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
-                    to: match tx.to {
-                        Some(to) => TxKind::Call(to),
-                        None => TxKind::Create,
-                    },
-                    value: tx.value.unwrap_or_default(),
-                    input: tx.input.input.to_owned().unwrap_or_default(),
-                    access_list: alloy_eips::eip2930::AccessList(
-                        tx.access_list
-                            .to_owned()
-                            .unwrap_or_default()
-                            .0
-                            .iter()
-                            .map(|a| alloy_eips::eip2930::AccessListItem {
-                                address: a.address,
-                                storage_keys: a.storage_keys.to_owned(),
-                            })
-                            .collect(),
-                    ),
-                };
-                let to_eip1559 = |tx: &TransactionRequest| TxEip1559 {
-                    chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
-                    nonce: tx.nonce.unwrap_or_default().to::<u64>(),
-                    gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
-                    max_fee_per_gas: tx.max_fee_per_gas.unwrap_or_default().to::<u128>(),
-                    max_priority_fee_per_gas: tx
-                        .max_priority_fee_per_gas
-                        .unwrap_or_default()
-                        .to::<u128>(),
-                    to: match tx.to {
-                        Some(to) => TxKind::Call(to),
-                        None => TxKind::Create,
-                    },
-                    value: tx.value.unwrap_or_default(),
-                    input: tx.input.input.to_owned().unwrap_or_default(),
-                    access_list: alloy_eips::eip2930::AccessList(
-                        tx.access_list
-                            .to_owned()
-                            .unwrap_or_default()
-                            .0
-                            .iter()
-                            .map(|a| alloy_eips::eip2930::AccessListItem {
-                                address: a.address,
-                                storage_keys: a.storage_keys.to_owned(),
-                            })
-                            .collect(),
-                    ),
-                };
-                // TODO: simplify this...
-
-                alloy_primitives::Signature::from_scalars_and_parity(r, s, v % 2).ok().map(|sig| {
-                    match tx.transaction_type {
-                        None => TypedTransaction::Legacy(Signed::new_unchecked(
-                            to_legacy(tx),
-                            sig,
-                            hash,
-                        )),
-                        Some(n) => match n.to::<u64>() {
-                            0 => TypedTransaction::Legacy(Signed::new_unchecked(
-                                to_legacy(tx),
-                                sig,
-                                hash,
-                            )),
-                            1 => TypedTransaction::EIP2930(Signed::new_unchecked(
-                                to_eip2930(tx),
-                                sig,
-                                hash,
-                            )),
-                            2 => TypedTransaction::EIP1559(Signed::new_unchecked(
-                                to_eip1559(tx),
-                                sig,
-                                hash,
-                            )),
-                            _ => TypedTransaction::Legacy(Signed::new_unchecked(
-                                to_legacy(tx),
-                                sig,
-                                hash,
-                            )),
-                        },
-                    }
-                })
-            })
-            .collect();
-
-        for tx in txs.iter() {
-            if let Some(tx) = tx {
-                self.ensure_typed_transaction_supported(tx)?;
-            } else {
-                // don't include any blocks with bad sigs
-                return Err(InvalidTransactionError::IncompatibleEIP155.into());
-            }
+        let mut valid_txs = vec![];
+        for tx in txs {
+            let tx = self.validate_signed_request(&tx)?;
+            self.ensure_typed_transaction_supported(&tx)?;
+            valid_txs.push(tx);
         }
-        let tx_bytes = txs
+        let tx_bytes = valid_txs
             .iter()
-            .filter(|tx| tx.is_some())
-            .map(|tx| tx.as_ref().unwrap()) // TODO: probably a cleaner way to do this
             .map(|tx| {
                 // convert tx to bytes
                 let mut buf = BytesMut::new();
