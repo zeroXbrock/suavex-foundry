@@ -2357,7 +2357,6 @@ impl EthApi {
         bundles: Vec<SBundle>,
     ) -> Result<ExecutionPayloadEnvelopeV3> {
         node_info!("suavex_buildEthBlockFromBundles");
-        self.anvil_set_auto_mine(false).await?;
         let mut raw_transactions = Vec::new();
         let mut pool_transactions = Vec::new();
         let mut fees = U256::default();
