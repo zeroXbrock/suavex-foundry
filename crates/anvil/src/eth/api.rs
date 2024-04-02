@@ -2163,7 +2163,7 @@ impl EthApi {
             .await
             .into_iter()
             .filter(|res| res.is_ok())
-            .map(|res| Arc::new(res.unwrap()))
+            .map(|res| Arc::new(res.unwrap())) // TODO: probably a cleaner way to do this
             .collect::<Vec<_>>();
         let fees = transactions
             .iter()
@@ -2196,72 +2196,64 @@ impl EthApi {
     ) -> Result<ExecutionPayloadEnvelopeV3> {
         node_info!("suavex_buildEthBlock");
         /*
-            TODO: so many unsafe unwraps, need to fix
+            TODO: there must be a better way to do this
         */
-        let txs: Vec<TypedTransaction> = txs
+        let txs: Vec<Option<TypedTransaction>> = txs
             .iter()
             .map(|tx| {
                 // TransactionRequest puts these in the 'other' field
-                let mut r = tx.other.get("r").unwrap().to_string();
-                let mut s = tx.other.get("s").unwrap().to_string();
-                let mut v = tx.other.get("v").unwrap().to_string();
-                let mut hash = tx.other.get("hash").unwrap().to_string();
+                let mut r = tx.other.get("r").expect("r is required").to_string();
+                let mut s = tx.other.get("s").expect("s is required").to_string();
+                let mut v = tx.other.get("v").expect("v is required").to_string();
+                let mut hash = tx.other.get("hash").expect("hash is required").to_string();
                 // strip quotes & leading 0x
                 r = r[3..(r.length() - 3)].to_string();
                 s = s[3..(s.length() - 3)].to_string();
                 v = v[3..(v.length() - 2)].to_string();
                 hash = hash[3..(hash.length() - 3)].to_string();
                 // make sure all values are even-length
-                if r.len() % 2 != 0 {
-                    r = format!("0{}", r);
-                }
-                if s.len() % 2 != 0 {
-                    s = format!("0{}", s);
-                }
-                if v.len() % 2 != 0 {
-                    v = format!("0{}", v);
-                }
-                if hash.len() % 2 != 0 {
-                    hash = format!("0{}", hash);
-                }
+                let pad_zero = |x: &mut String| {
+                    if x.len() % 2 != 0 {
+                        *x = format!("0{}", x);
+                    }
+                };
+                pad_zero(&mut r);
+                pad_zero(&mut s);
+                pad_zero(&mut v);
+                pad_zero(&mut hash);
 
-                let r = r.parse::<FixedBytes<32>>().unwrap();
-                let s = s.parse::<FixedBytes<32>>().unwrap();
-                let v = u64::from_str_radix(&v, 16).unwrap();
-                let hash = hash.parse::<FixedBytes<32>>().unwrap();
-
-                // TODO: simplify this...
-
-                let signature =
-                    alloy_primitives::Signature::from_scalars_and_parity(r, s, v % 2).unwrap();
+                let r = r.parse::<FixedBytes<32>>().unwrap_or_default();
+                let s = s.parse::<FixedBytes<32>>().unwrap_or_default();
+                let v = u64::from_str_radix(&v, 16).unwrap_or_default();
+                let hash = hash.parse::<FixedBytes<32>>().unwrap_or_default();
 
                 let to_legacy = |tx: &TransactionRequest| TxLegacy {
                     chain_id: tx.chain_id.map(|cid| cid.to::<u64>()),
-                    nonce: tx.nonce.unwrap().to::<u64>(),
-                    gas_price: tx.gas_price.unwrap().to::<u128>(),
-                    gas_limit: tx.gas.unwrap().to::<u64>(),
+                    nonce: tx.nonce.unwrap_or_default().to::<u64>(),
+                    gas_price: tx.gas_price.unwrap_or_default().to::<u128>(),
+                    gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
                     to: match tx.to {
                         Some(to) => TxKind::Call(to),
                         None => TxKind::Create,
                     },
-                    value: tx.value.unwrap(),
-                    input: tx.input.input.to_owned().unwrap(),
+                    value: tx.value.unwrap_or_default(),
+                    input: tx.input.input.to_owned().unwrap_or_default(),
                 };
                 let to_eip2930 = |tx: &TransactionRequest| TxEip2930 {
-                    chain_id: tx.chain_id.unwrap().to::<u64>(),
-                    nonce: tx.nonce.unwrap().to::<u64>(),
-                    gas_price: tx.gas_price.unwrap().to::<u128>(),
-                    gas_limit: tx.gas.unwrap().to::<u64>(),
+                    chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
+                    nonce: tx.nonce.unwrap_or_default().to::<u64>(),
+                    gas_price: tx.gas_price.unwrap_or_default().to::<u128>(),
+                    gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
                     to: match tx.to {
                         Some(to) => TxKind::Call(to),
                         None => TxKind::Create,
                     },
-                    value: tx.value.unwrap(),
-                    input: tx.input.input.to_owned().unwrap(),
+                    value: tx.value.unwrap_or_default(),
+                    input: tx.input.input.to_owned().unwrap_or_default(),
                     access_list: alloy_eips::eip2930::AccessList(
                         tx.access_list
                             .to_owned()
-                            .unwrap()
+                            .unwrap_or_default()
                             .0
                             .iter()
                             .map(|a| alloy_eips::eip2930::AccessListItem {
@@ -2272,21 +2264,24 @@ impl EthApi {
                     ),
                 };
                 let to_eip1559 = |tx: &TransactionRequest| TxEip1559 {
-                    chain_id: tx.chain_id.unwrap().to::<u64>(),
-                    nonce: tx.nonce.unwrap().to::<u64>(),
-                    gas_limit: tx.gas.unwrap().to::<u64>(),
-                    max_fee_per_gas: tx.max_fee_per_gas.unwrap().to::<u128>(),
-                    max_priority_fee_per_gas: tx.max_priority_fee_per_gas.unwrap().to::<u128>(),
+                    chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
+                    nonce: tx.nonce.unwrap_or_default().to::<u64>(),
+                    gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
+                    max_fee_per_gas: tx.max_fee_per_gas.unwrap_or_default().to::<u128>(),
+                    max_priority_fee_per_gas: tx
+                        .max_priority_fee_per_gas
+                        .unwrap_or_default()
+                        .to::<u128>(),
                     to: match tx.to {
                         Some(to) => TxKind::Call(to),
                         None => TxKind::Create,
                     },
-                    value: tx.value.unwrap(),
-                    input: tx.input.input.to_owned().unwrap(),
+                    value: tx.value.unwrap_or_default(),
+                    input: tx.input.input.to_owned().unwrap_or_default(),
                     access_list: alloy_eips::eip2930::AccessList(
                         tx.access_list
                             .to_owned()
-                            .unwrap()
+                            .unwrap_or_default()
                             .0
                             .iter()
                             .map(|a| alloy_eips::eip2930::AccessListItem {
@@ -2296,44 +2291,54 @@ impl EthApi {
                             .collect(),
                     ),
                 };
+                // TODO: simplify this...
 
-                match tx.transaction_type {
-                    None => TypedTransaction::Legacy(Signed::new_unchecked(
-                        to_legacy(tx),
-                        signature,
-                        hash,
-                    )),
-                    Some(n) => match n.to::<u64>() {
-                        0 => TypedTransaction::Legacy(Signed::new_unchecked(
+                alloy_primitives::Signature::from_scalars_and_parity(r, s, v % 2).ok().map(|sig| {
+                    match tx.transaction_type {
+                        None => TypedTransaction::Legacy(Signed::new_unchecked(
                             to_legacy(tx),
-                            signature,
+                            sig,
                             hash,
                         )),
-                        1 => TypedTransaction::EIP2930(Signed::new_unchecked(
-                            to_eip2930(tx),
-                            signature,
-                            hash,
-                        )),
-                        2 => TypedTransaction::EIP1559(Signed::new_unchecked(
-                            to_eip1559(tx),
-                            signature,
-                            hash,
-                        )),
-                        _ => TypedTransaction::Legacy(Signed::new_unchecked(
-                            to_legacy(tx),
-                            signature,
-                            hash,
-                        )),
-                    },
-                }
+                        Some(n) => match n.to::<u64>() {
+                            0 => TypedTransaction::Legacy(Signed::new_unchecked(
+                                to_legacy(tx),
+                                sig,
+                                hash,
+                            )),
+                            1 => TypedTransaction::EIP2930(Signed::new_unchecked(
+                                to_eip2930(tx),
+                                sig,
+                                hash,
+                            )),
+                            2 => TypedTransaction::EIP1559(Signed::new_unchecked(
+                                to_eip1559(tx),
+                                sig,
+                                hash,
+                            )),
+                            _ => TypedTransaction::Legacy(Signed::new_unchecked(
+                                to_legacy(tx),
+                                sig,
+                                hash,
+                            )),
+                        },
+                    }
+                })
             })
             .collect();
 
         for tx in txs.iter() {
-            self.ensure_typed_transaction_supported(tx)?;
+            if let Some(tx) = tx {
+                self.ensure_typed_transaction_supported(tx)?;
+            } else {
+                // don't include any blocks with bad sigs
+                return Err(InvalidTransactionError::IncompatibleEIP155.into());
+            }
         }
         let tx_bytes = txs
             .iter()
+            .filter(|tx| tx.is_some())
+            .map(|tx| tx.as_ref().unwrap()) // TODO: probably a cleaner way to do this
             .map(|tx| {
                 // convert tx to bytes
                 let mut buf = BytesMut::new();
