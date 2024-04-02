@@ -2312,9 +2312,6 @@ impl EthApi {
         txs: Vec<TransactionRequest>,
     ) -> Result<ExecutionPayloadEnvelopeV3> {
         node_info!("suavex_buildEthBlock");
-        /*
-            TODO: there must be a better way to do this
-        */
         let mut valid_txs = vec![];
         for tx in txs {
             let tx = self.validate_signed_request(&tx)?;
@@ -2324,7 +2321,6 @@ impl EthApi {
         let tx_bytes = valid_txs
             .iter()
             .map(|tx| {
-                // convert tx to bytes
                 let mut buf = BytesMut::new();
                 tx.encode(&mut buf);
                 buf.to_vec().into()
@@ -2344,7 +2340,6 @@ impl EthApi {
         let mut raw_transactions = Vec::new();
         let mut pool_transactions = Vec::new();
         let mut fees = U256::default();
-
         for bundle in bundles {
             raw_transactions.extend(bundle.transactions.to_owned());
             let pool = self.validate_txs(&bundle.transactions).await?;
