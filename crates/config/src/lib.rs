@@ -320,6 +320,8 @@ pub struct Config {
     /// If set to true, changes compilation pipeline to go through the Yul intermediate
     /// representation.
     pub via_ir: bool,
+    /// Whether to include the AST as JSON in the compiler output.
+    pub ast: bool,
     /// RPC storage caching settings determines what chains and endpoints to cache
     pub rpc_storage_caching: StorageCachingConfig,
     /// Disables storage caching entirely. This overrides any settings made in
@@ -352,10 +354,8 @@ pub struct Config {
     /// included in solc's output selection, see also
     /// [OutputSelection](foundry_compilers::artifacts::output_selection::OutputSelection)
     pub sparse_mode: bool,
-    /// Whether to emit additional build info files
-    ///
-    /// If set to `true`, `ethers-solc` will generate additional build info json files for every
-    /// new build, containing the `CompilerInput` and `CompilerOutput`
+    /// Generates additional build info json files for every new build, containing the
+    /// `CompilerInput` and `CompilerOutput`.
     pub build_info: bool,
     /// The path to the `build-info` directory that contains the build info json files.
     pub build_info_path: Option<PathBuf>,
@@ -373,6 +373,11 @@ pub struct Config {
     /// <https://github.com/foundry-rs/foundry/issues/5782>
     /// Should be removed once EvmVersion Cancun is supported by solc
     pub cancun: bool,
+
+    /// Whether to enable call isolation.
+    ///
+    /// Useful for more correct gas accounting and EVM behavior in general.
+    pub isolate: bool,
 
     /// Address labels
     pub labels: HashMap<Address, String>,
@@ -670,7 +675,7 @@ impl Config {
             .set_auto_detect(self.is_auto_detect())
             .set_offline(self.offline)
             .set_cached(cached)
-            .set_build_info(cached & self.build_info)
+            .set_build_info(cached && self.build_info)
             .set_no_artifacts(no_artifacts)
             .build()?;
 
@@ -770,7 +775,7 @@ impl Config {
             .tests(&self.test)
             .scripts(&self.script)
             .artifacts(&self.out)
-            .libs(self.libs.clone())
+            .libs(self.libs.iter())
             .remappings(self.get_all_remappings());
 
         if let Some(build_info_path) = &self.build_info_path {
@@ -798,8 +803,8 @@ impl Config {
     /// contracts/tokens/token.sol
     /// contracts/math/math.sol
     /// ```
-    pub fn get_all_remappings(&self) -> Vec<Remapping> {
-        self.remappings.iter().map(|m| m.clone().into()).collect()
+    pub fn get_all_remappings(&self) -> impl Iterator<Item = Remapping> + '_ {
+        self.remappings.iter().map(|m| m.clone().into())
     }
 
     /// Returns the configured rpc jwt secret
@@ -1027,6 +1032,7 @@ impl Config {
     /// `extra_output` fields
     pub fn configured_artifacts_handler(&self) -> ConfigurableArtifacts {
         let mut extra_output = self.extra_output.clone();
+
         // Sourcify verification requires solc metadata output. Since, it doesn't
         // affect the UX & performance of the compiler, output the metadata files
         // by default.
@@ -1036,7 +1042,7 @@ impl Config {
             extra_output.push(ContractOutputSelection::Metadata);
         }
 
-        ConfigurableArtifacts::new(extra_output, self.extra_output_files.clone())
+        ConfigurableArtifacts::new(extra_output, self.extra_output_files.iter().cloned())
     }
 
     /// Parses all libraries in the form of
@@ -1045,28 +1051,30 @@ impl Config {
         Libraries::parse(&self.libraries)
     }
 
-    /// Returns the configured `solc` `Settings` that includes:
-    ///   - all libraries
-    ///   - the optimizer (including details, if configured)
-    ///   - evm version
-    pub fn solc_settings(&self) -> Result<Settings, SolcError> {
-        let libraries = self.parsed_libraries()?.with_applied_remappings(&self.project_paths());
-        let optimizer = self.optimizer();
+    /// Returns all libraries with applied remappings. Same as `self.solc_settings()?.libraries`.
+    pub fn libraries_with_remappings(&self) -> Result<Libraries, SolcError> {
+        Ok(self.parsed_libraries()?.with_applied_remappings(&self.project_paths()))
+    }
 
+    /// Returns the configured `solc` `Settings` that includes:
+    /// - all libraries
+    /// - the optimizer (including details, if configured)
+    /// - evm version
+    pub fn solc_settings(&self) -> Result<Settings, SolcError> {
         // By default if no targets are specifically selected the model checker uses all targets.
         // This might be too much here, so only enable assertion checks.
         // If users wish to enable all options they need to do so explicitly.
         let mut model_checker = self.model_checker.clone();
-        if let Some(ref mut model_checker_settings) = model_checker {
+        if let Some(model_checker_settings) = &mut model_checker {
             if model_checker_settings.targets.is_none() {
                 model_checker_settings.targets = Some(vec![ModelCheckerTarget::Assert]);
             }
         }
 
         let mut settings = Settings {
-            optimizer,
+            libraries: self.libraries_with_remappings()?,
+            optimizer: self.optimizer(),
             evm_version: Some(self.evm_version),
-            libraries,
             metadata: Some(SettingsMetadata {
                 use_literal_content: Some(self.use_literal_content),
                 bytecode_hash: Some(self.bytecode_hash),
@@ -1074,16 +1082,23 @@ impl Config {
             }),
             debug: self.revert_strings.map(|revert_strings| DebuggingSettings {
                 revert_strings: Some(revert_strings),
+                // Not used.
                 debug_info: Vec::new(),
             }),
             model_checker,
-            ..Default::default()
+            via_ir: Some(self.via_ir),
+            // Not used.
+            stop_after: None,
+            // Set in project paths.
+            remappings: Vec::new(),
+            // Set with `with_extra_output` below.
+            output_selection: Default::default(),
         }
-        .with_extra_output(self.configured_artifacts_handler().output_selection())
-        .with_ast();
+        .with_extra_output(self.configured_artifacts_handler().output_selection());
 
-        if self.via_ir {
-            settings = settings.with_via_ir();
+        // We're keeping AST in `--build-info` for backwards compatibility with HardHat.
+        if self.ast || self.build_info {
+            settings = settings.with_ast();
         }
 
         Ok(settings)
@@ -1810,6 +1825,7 @@ impl Default for Config {
             profile: Self::DEFAULT_PROFILE,
             fs_permissions: FsPermissions::new([PathPermission::read("out")]),
             cancun: false,
+            isolate: false,
             __root: Default::default(),
             src: "src".into(),
             test: "test".into(),
@@ -1877,6 +1893,7 @@ impl Default for Config {
             ignored_file_paths: vec![],
             deny_warnings: false,
             via_ir: false,
+            ast: false,
             rpc_storage_caching: Default::default(),
             rpc_endpoints: Default::default(),
             etherscan: Default::default(),
@@ -2885,7 +2902,7 @@ mod tests {
 
             // contains additional remapping to the source dir
             assert_eq!(
-                config.get_all_remappings(),
+                config.get_all_remappings().collect::<Vec<_>>(),
                 vec![
                     Remapping::from_str("ds-test/=lib/ds-test/src/").unwrap(),
                     Remapping::from_str("env-lib/=lib/env-lib/").unwrap(),
