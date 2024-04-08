@@ -3,8 +3,14 @@ use super::{
     trie,
 };
 use alloy_consensus::Header;
+use alloy_network::Sealable;
 use alloy_primitives::{Address, Bloom, Bytes, B256, U256};
 use alloy_rlp::{RlpDecodable, RlpEncodable};
+use alloy_rpc_engine_types::{
+    BlobsBundleV1, ExecutionPayloadEnvelopeV3, ExecutionPayloadV1, ExecutionPayloadV2,
+    ExecutionPayloadV3,
+};
+use alloy_rpc_types::Withdrawal;
 
 // Type alias to optionally support impersonated transactions
 #[cfg(not(feature = "impersonated-tx"))]
@@ -18,6 +24,55 @@ pub struct BlockInfo {
     pub block: Block,
     pub transactions: Vec<TransactionInfo>,
     pub receipts: Vec<TypedReceipt>,
+}
+
+impl BlockInfo {
+    pub fn execution_envelope(
+        &self,
+        raw_transactions: &[Bytes],
+        args: BuildBlockArgs,
+        fees: U256,
+    ) -> ExecutionPayloadEnvelopeV3 {
+        let block_hash = self.block.header.hash();
+        ExecutionPayloadEnvelopeV3 {
+            execution_payload: ExecutionPayloadV3 {
+                payload_inner: ExecutionPayloadV2 {
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: self.block.header.parent_hash,
+                        fee_recipient: self.block.header.beneficiary,
+                        state_root: self.block.header.state_root,
+                        receipts_root: self.block.header.receipts_root,
+                        logs_bloom: self.block.header.logs_bloom,
+                        prev_randao: self.block.header.mix_hash,
+                        block_number: self.block.header.number,
+                        gas_limit: self.block.header.gas_limit,
+                        gas_used: self.block.header.gas_used,
+                        timestamp: self.block.header.timestamp,
+                        extra_data: self.block.header.extra_data.to_owned(),
+                        base_fee_per_gas: self
+                            .block
+                            .header
+                            .base_fee_per_gas
+                            .map(|f| U256::from(f))
+                            .unwrap_or("1000000000".parse::<U256>().unwrap()),
+                        block_hash,
+                        transactions: raw_transactions.to_vec(),
+                    },
+                    withdrawals: args
+                        .withdrawals
+                        .into_iter()
+                        .map(|w| w.into())
+                        .collect::<Vec<Withdrawal>>(),
+                },
+                blob_gas_used: self.block.header.blob_gas_used.unwrap_or_default(),
+                excess_blob_gas: self.block.header.excess_blob_gas.unwrap_or_default(),
+            },
+            block_value: fees,
+            blobs_bundle: BlobsBundleV1 { commitments: vec![], blobs: vec![], proofs: vec![] },
+            should_override_builder: false,
+            parent_beacon_block_root: None,
+        }
+    }
 }
 
 /// An Ethereum Block
@@ -116,6 +171,24 @@ impl From<Header> for PartialHeader {
             base_fee: value.base_fee_per_gas,
         }
     }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub struct BuildBlockArgs {
+    pub slot: u64,
+    // #[serde(deserialize_with = "base64_to_bytes")] // TODO: use serde macro so we can use Bytes instead of String
+    pub proposer_pubkey: String,
+    pub parent: B256,
+    pub timestamp: u64,
+    pub fee_recipient: Address,
+    pub gas_limit: u64,
+    pub random: B256,
+    pub withdrawals: Vec<Withdrawal>,
+    pub parent_beacon_block_root: Option<B256>,
+    pub extra: Bytes,
+    pub beacon_root: B256,
+    pub fill_pending: bool,
 }
 
 #[cfg(test)]

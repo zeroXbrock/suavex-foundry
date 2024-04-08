@@ -36,11 +36,13 @@ hash-db = "0.15"
 memory-db = "0.29"
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-network.workspace = true
 alloy-rlp.workspace = true
 alloy-signer = { workspace = true, features = ["eip712", "mnemonic"] }
 alloy-sol-types = { workspace = true, features = ["std"] }
 alloy-dyn-abi = { workspace = true, features = ["std", "eip712"] }
+alloy-rpc-engine-types.workspace = true
 alloy-rpc-types.workspace = true
 alloy-rpc-trace-types.workspace = true
 alloy-providers.workspace = true

@@ -12,6 +12,7 @@ use alloy_rpc_types::{
 };
 
 pub mod block;
+pub mod bundle;
 pub mod proof;
 pub mod subscription;
 pub mod transaction;
@@ -23,6 +24,7 @@ pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
 use self::serde_helpers::*;
+use self::{block::BuildBlockArgs, bundle::SBundle};
 
 #[cfg(feature = "serde")]
 use foundry_common::serde_helpers::{
@@ -172,6 +174,12 @@ pub enum EthRequest {
 
     #[cfg_attr(feature = "serde", serde(rename = "suavex_call"))]
     SuavexCall(Address, String),
+
+    #[cfg_attr(feature = "serde", serde(rename = "suavex_buildEthBlock"))]
+    SuavexBuildEthBlock(Option<BuildBlockArgs>, Vec<TransactionRequest>),
+
+    #[cfg_attr(feature = "serde", serde(rename = "suavex_buildEthBlockFromBundles"))]
+    SuavexBuildEthBlockFromBundles(BuildBlockArgs, Vec<SBundle>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(

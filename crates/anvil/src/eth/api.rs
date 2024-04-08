@@ -4,8 +4,8 @@ use super::{
 };
 use crate::{
     eth::{
-        backend,
         backend::{
+            self,
             db::SerializableState,
             mem::{MIN_CREATE_GAS, MIN_TRANSACTION_GAS},
             notifications::NewBlockNotifications,
@@ -23,19 +23,19 @@ use crate::{
             },
             Pool,
         },
-        sign,
-        sign::Signer,
+        sign::{self, Signer},
     },
     filter::{EthFilter, Filters, LogsFilter},
     mem::transaction_build,
     revm::primitives::Output,
     ClientFork, LoggingManager, Miner, MiningMode, StorageInfo,
 };
-use alloy_consensus::TxLegacy;
+use alloy_consensus::{TxEip1559, TxEip2930, TxLegacy};
 use alloy_dyn_abi::TypedData;
 use alloy_network::{Signed, TxKind};
-use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256, U64};
-use alloy_rlp::Decodable;
+use alloy_primitives::{Address, Bytes, FixedBytes, TxHash, B256, B64, U256, U64};
+use alloy_rlp::{Decodable, Encodable};
+use alloy_rpc_engine_types::ExecutionPayloadEnvelopeV3;
 use alloy_rpc_trace_types::{
     geth::{DefaultFrame, GethDebugTracingOptions, GethDefaultTracingOptions, GethTrace},
     parity::LocalizedTransactionTrace,
@@ -51,7 +51,8 @@ use alloy_rpc_types::{
 use alloy_transport::TransportErrorKind;
 use anvil_core::{
     eth::{
-        block::BlockInfo,
+        block::{BlockInfo, BuildBlockArgs},
+        bundle::SBundle,
         transaction::{
             transaction_request_to_typed, PendingTransaction, TypedTransaction,
             TypedTransactionRequest,
@@ -65,6 +66,7 @@ use anvil_core::{
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use bytes::BytesMut;
 use foundry_common::provider::alloy::ProviderBuilder;
 use foundry_evm::{
     backend::DatabaseError,
@@ -75,7 +77,10 @@ use foundry_evm::{
         primitives::BlockEnv,
     },
 };
-use futures::channel::{mpsc::Receiver, oneshot};
+use futures::{
+    channel::{mpsc::Receiver, oneshot},
+    future::join_all,
+};
 use parking_lot::RwLock;
 use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
 
@@ -417,6 +422,12 @@ impl EthApi {
             EthRequest::SuavexCall(address, input) => {
                 self.suavex_call(address, input).await.to_rpc_result()
             }
+            EthRequest::SuavexBuildEthBlock(args, txs) => {
+                self.suavex_build_eth_block(args, txs).await.to_rpc_result()
+            }
+            EthRequest::SuavexBuildEthBlockFromBundles(args, bundles) => {
+                self.suavex_build_eth_block_from_bundles(args, bundles).await.to_rpc_result()
+            }
         }
     }
 
@@ -606,7 +617,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.get_balance(address, number).await?)
+                    return Ok(fork.get_balance(address, number).await?);
                 }
             }
         }
@@ -763,7 +774,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.get_code(address, number).await?)
+                    return Ok(fork.get_code(address, number).await?);
                 }
             }
         }
@@ -788,7 +799,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork_inclusive(number) {
-                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?)
+                    return Ok(fork.get_proof(address, keys, Some(number.into())).await?);
                 }
             }
         }
@@ -983,7 +994,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return Ok(fork.call(&request, Some(number.into())).await?)
+                    return Ok(fork.call(&request, Some(number.into())).await?);
                 }
             }
         }
@@ -1030,7 +1041,7 @@ impl EthApi {
         if let BlockRequest::Number(number) = block_request {
             if let Some(fork) = self.get_fork() {
                 if fork.predates_fork(number) {
-                    return Ok(fork.create_access_list(&request, Some(number.into())).await?)
+                    return Ok(fork.create_access_list(&request, Some(number.into())).await?);
                 }
             }
         }
@@ -1172,7 +1183,7 @@ impl EthApi {
             self.backend.ensure_block_number(Some(BlockId::Hash(block_hash.into()))).await?;
         if let Some(fork) = self.get_fork() {
             if fork.predates_fork_inclusive(number) {
-                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?)
+                return Ok(fork.uncle_by_block_hash_and_index(block_hash, idx.into()).await?);
             }
         }
         // It's impossible to have uncles outside of fork mode
@@ -2087,6 +2098,197 @@ impl EthApi {
 
         Ok(content)
     }
+}
+
+// === impl EthApi suavex endpoints ===
+
+struct PoolTxsAndFees {
+    transactions: Vec<Arc<PoolTransaction>>,
+    fees: U256,
+}
+
+impl EthApi {
+    // use alloy_rpc
+    async fn validate_tx(&self, tx: &Bytes) -> Result<PoolTransaction> {
+        let mut data = tx.as_ref();
+        if data.is_empty() {
+            return Err(BlockchainError::EmptyRawTransactionData);
+        }
+        let transaction = if data[0] > 0x7f {
+            // legacy transaction
+            match Signed::<TxLegacy>::decode(&mut data) {
+                Ok(transaction) => TypedTransaction::Legacy(transaction),
+                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
+            }
+        } else {
+            // the [TypedTransaction] requires a valid rlp input,
+            // but EIP-1559 prepends a version byte, so we need to encode the data first to get a
+            // valid rlp and then rlp decode impl of `TypedTransaction` will remove and check the
+            // version byte
+            let extend = alloy_rlp::encode(data);
+            let tx = match TypedTransaction::decode(&mut &extend[..]) {
+                Ok(transaction) => transaction,
+                Err(_) => return Err(BlockchainError::FailedToDecodeSignedTransaction),
+            };
+
+            self.ensure_typed_transaction_supported(&tx)?;
+            tx
+        };
+        let pending_transaction = PendingTransaction::new(transaction)?;
+
+        // pre-validate
+        self.backend.validate_pool_transaction(&pending_transaction).await?;
+
+        let on_chain_nonce = self.backend.current_nonce(*pending_transaction.sender()).await?;
+        let from = *pending_transaction.sender();
+        let nonce = pending_transaction.transaction.nonce();
+        let requires = required_marker(nonce, on_chain_nonce, from);
+
+        let priority = self.transaction_priority(&pending_transaction.transaction);
+        let pool_transaction = PoolTransaction {
+            requires,
+            provides: vec![to_marker(nonce.to::<u64>(), *pending_transaction.sender())],
+            pending_transaction,
+            priority,
+        };
+
+        // store in pool
+        self.pool.add_transaction(pool_transaction.clone())?;
+
+        Ok(pool_transaction)
+    }
+
+    async fn validate_txs(&self, txs: &[Bytes]) -> Result<PoolTxsAndFees> {
+        let transactions = join_all(txs.iter().map(|tx| async { self.validate_tx(tx).await }))
+            .await
+            .into_iter()
+            .filter(|res| res.is_ok())
+            .map(|res| Arc::new(res.unwrap())) // TODO: probably a cleaner way to do this
+            .collect::<Vec<_>>();
+        let fees = transactions
+            .iter()
+            .map(|tx| tx.pending_transaction.transaction.clone())
+            .map(|tx| tx.gas_price() * tx.gas_limit())
+            .sum::<U256>();
+        Ok(PoolTxsAndFees { transactions, fees })
+    }
+
+    fn validate_signed_request(&self, tx: &TransactionRequest) -> Result<TypedTransaction> {
+        // TransactionRequest puts these in the 'other' field
+        let mut r =
+            tx.other.get("r").ok_or(BlockchainError::FailedToDecodeSignedTransaction)?.to_string();
+        let mut s =
+            tx.other.get("s").ok_or(BlockchainError::FailedToDecodeSignedTransaction)?.to_string();
+        let mut v =
+            tx.other.get("v").ok_or(BlockchainError::FailedToDecodeSignedTransaction)?.to_string();
+        let mut hash = tx
+            .other
+            .get("hash")
+            .ok_or(BlockchainError::FailedToDecodeSignedTransaction)?
+            .to_string();
+        // strip quotes & leading 0x
+        r = r[3..(r.length() - 3)].to_string();
+        s = s[3..(s.length() - 3)].to_string();
+        v = v[3..(v.length() - 2)].to_string();
+        hash = hash[3..(hash.length() - 3)].to_string();
+        // make sure all values are even-length
+        let pad_zero = |x: &mut String| {
+            if x.len() % 2 != 0 {
+                *x = format!("0{}", x);
+            }
+        };
+        pad_zero(&mut r);
+        pad_zero(&mut s);
+        pad_zero(&mut v);
+        pad_zero(&mut hash);
+
+        let r = r
+            .parse::<FixedBytes<32>>()
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let s = s
+            .parse::<FixedBytes<32>>()
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let v = u64::from_str_radix(&v, 16)
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+        let hash = hash
+            .parse::<FixedBytes<32>>()
+            .map_err(|_| BlockchainError::FailedToDecodeSignedTransaction)?;
+
+        let to_legacy = |txn: &TransactionRequest| TxLegacy {
+            chain_id: txn.chain_id.map(|cid| cid.to::<u64>()),
+            nonce: txn.nonce.unwrap_or_default().to::<u64>(),
+            gas_price: txn.gas_price.unwrap_or_default().to::<u128>(),
+            gas_limit: txn.gas.unwrap_or_default().to::<u64>(),
+            to: match txn.to {
+                Some(to) => TxKind::Call(to),
+                None => TxKind::Create,
+            },
+            value: txn.value.unwrap_or_default(),
+            input: txn.input.input.to_owned().unwrap_or_default(),
+        };
+        let to_eip2930 = |txn: &TransactionRequest| TxEip2930 {
+            chain_id: txn.chain_id.unwrap_or_default().to::<u64>(),
+            nonce: txn.nonce.unwrap_or_default().to::<u64>(),
+            gas_price: txn.gas_price.unwrap_or_default().to::<u128>(),
+            gas_limit: txn.gas.unwrap_or_default().to::<u64>(),
+            to: match txn.to {
+                Some(to) => TxKind::Call(to),
+                None => TxKind::Create,
+            },
+            value: txn.value.unwrap_or_default(),
+            input: txn.input.input.to_owned().unwrap_or_default(),
+            access_list: alloy_eips::eip2930::AccessList(
+                txn.access_list
+                    .to_owned()
+                    .unwrap_or_default()
+                    .0
+                    .iter()
+                    .map(|a| alloy_eips::eip2930::AccessListItem {
+                        address: a.address,
+                        storage_keys: a.storage_keys.to_owned(),
+                    })
+                    .collect(),
+            ),
+        };
+        let to_eip1559 = |tx: &TransactionRequest| TxEip1559 {
+            chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
+            nonce: tx.nonce.unwrap_or_default().to::<u64>(),
+            gas_limit: tx.gas.unwrap_or_default().to::<u64>(),
+            max_fee_per_gas: tx.max_fee_per_gas.unwrap_or_default().to::<u128>(),
+            max_priority_fee_per_gas: tx.max_priority_fee_per_gas.unwrap_or_default().to::<u128>(),
+            to: match tx.to {
+                Some(to) => TxKind::Call(to),
+                None => TxKind::Create,
+            },
+            value: tx.value.unwrap_or_default(),
+            input: tx.input.input.to_owned().unwrap_or_default(),
+            access_list: alloy_eips::eip2930::AccessList(
+                tx.access_list
+                    .to_owned()
+                    .unwrap_or_default()
+                    .0
+                    .iter()
+                    .map(|a| alloy_eips::eip2930::AccessListItem {
+                        address: a.address,
+                        storage_keys: a.storage_keys.to_owned(),
+                    })
+                    .collect(),
+            ),
+        };
+        // TODO: simplify this...
+
+        Ok(alloy_primitives::Signature::from_scalars_and_parity(r, s, v % 2).map(|sig| match tx
+            .transaction_type
+        {
+            None => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, hash)),
+            Some(n) => match n.to::<u64>() {
+                0 => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, hash)),
+                1 => TypedTransaction::EIP2930(Signed::new_unchecked(to_eip2930(tx), sig, hash)),
+                2 => TypedTransaction::EIP1559(Signed::new_unchecked(to_eip1559(tx), sig, hash)),
+                _ => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, hash)),
+            },
+        })?)
+    }
 
     /// eth_call for SUAVE MEVM.
     /// Returns base64-encoded bytestring.
@@ -2102,6 +2304,50 @@ impl EthApi {
             .input(TransactionInput::new(input));
         let res = self.call(request, Some(BlockNumber::Latest.into()), None).await?;
         Ok(BASE64_STANDARD.encode(res.to_vec()))
+    }
+
+    pub async fn suavex_build_eth_block(
+        &self,
+        args: Option<BuildBlockArgs>,
+        txs: Vec<TransactionRequest>,
+    ) -> Result<ExecutionPayloadEnvelopeV3> {
+        node_info!("suavex_buildEthBlock");
+        let mut valid_txs = vec![];
+        for tx in txs {
+            let tx = self.validate_signed_request(&tx)?;
+            self.ensure_typed_transaction_supported(&tx)?;
+            valid_txs.push(tx);
+        }
+        let tx_bytes = valid_txs
+            .iter()
+            .map(|tx| {
+                let mut buf = BytesMut::new();
+                tx.encode(&mut buf);
+                buf.to_vec().into()
+            })
+            .collect::<Vec<Bytes>>();
+        let pool = self.validate_txs(&tx_bytes).await?;
+        let block = self.backend.pending_block(pool.transactions).await;
+        Ok(block.execution_envelope(&tx_bytes, args.unwrap_or_default(), pool.fees))
+    }
+
+    pub async fn suavex_build_eth_block_from_bundles(
+        &self,
+        args: BuildBlockArgs,
+        bundles: Vec<SBundle>,
+    ) -> Result<ExecutionPayloadEnvelopeV3> {
+        node_info!("suavex_buildEthBlockFromBundles");
+        let mut raw_transactions = Vec::new();
+        let mut pool_transactions = Vec::new();
+        let mut fees = U256::default();
+        for bundle in bundles {
+            raw_transactions.extend(bundle.transactions.to_owned());
+            let pool = self.validate_txs(&bundle.transactions).await?;
+            fees += pool.fees;
+            pool_transactions.extend(pool.transactions);
+        }
+        let block_info = self.backend.pending_block(pool_transactions).await;
+        Ok(block_info.execution_envelope(&raw_transactions, args, fees))
     }
 }
 
@@ -2171,7 +2417,7 @@ impl EthApi {
                             "not available on past forked blocks".to_string(),
                         ));
                     }
-                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?)
+                    return Ok(fork.estimate_gas(&request, Some(number.into())).await?);
                 }
             }
         }
