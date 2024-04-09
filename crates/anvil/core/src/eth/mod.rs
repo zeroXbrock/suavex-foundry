@@ -1,6 +1,6 @@
 use crate::{
     eth::subscription::SubscriptionId,
-    types::{EvmMineOptions, Forking, Index},
+    types::{EvmMineOptions, Forking, Index, TransactionSuave},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_trace_types::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
@@ -24,7 +24,7 @@ pub mod serde_helpers;
 
 #[cfg(feature = "serde")]
 use self::serde_helpers::*;
-use self::{block::BuildBlockArgs, bundle::SBundle};
+use self::{block::SuavexBuildBlockArgs, bundle::SBundle};
 
 #[cfg(feature = "serde")]
 use foundry_common::serde_helpers::{
@@ -176,10 +176,10 @@ pub enum EthRequest {
     SuavexCall(Address, String),
 
     #[cfg_attr(feature = "serde", serde(rename = "suavex_buildEthBlock"))]
-    SuavexBuildEthBlock(Option<BuildBlockArgs>, Vec<TransactionRequest>),
+    SuavexBuildEthBlock(Option<SuavexBuildBlockArgs>, Vec<TransactionSuave>),
 
     #[cfg_attr(feature = "serde", serde(rename = "suavex_buildEthBlockFromBundles"))]
-    SuavexBuildEthBlockFromBundles(BuildBlockArgs, Vec<SBundle>),
+    SuavexBuildEthBlockFromBundles(SuavexBuildBlockArgs, Vec<SBundle>),
 
     #[cfg_attr(feature = "serde", serde(rename = "eth_createAccessList"))]
     EthCreateAccessList(

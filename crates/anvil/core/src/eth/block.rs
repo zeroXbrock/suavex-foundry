@@ -30,7 +30,7 @@ impl BlockInfo {
     pub fn execution_envelope(
         &self,
         raw_transactions: &[Bytes],
-        args: BuildBlockArgs,
+        args: SuavexBuildBlockArgs,
         fees: U256,
     ) -> ExecutionPayloadEnvelopeV3 {
         let block_hash = self.block.header.hash();
@@ -38,23 +38,47 @@ impl BlockInfo {
             execution_payload: ExecutionPayloadV3 {
                 payload_inner: ExecutionPayloadV2 {
                     payload_inner: ExecutionPayloadV1 {
-                        parent_hash: self.block.header.parent_hash,
-                        fee_recipient: self.block.header.beneficiary,
+                        parent_hash: if args.parent == B256::ZERO {
+                            self.block.header.parent_hash
+                        } else {
+                            args.parent
+                        },
+                        fee_recipient: if args.fee_recipient == Address::ZERO {
+                            self.block.header.beneficiary
+                        } else {
+                            args.fee_recipient
+                        },
                         state_root: self.block.header.state_root,
                         receipts_root: self.block.header.receipts_root,
                         logs_bloom: self.block.header.logs_bloom,
-                        prev_randao: self.block.header.mix_hash,
+                        prev_randao: if args.random == B256::ZERO {
+                            self.block.header.mix_hash
+                        } else {
+                            args.random
+                        },
                         block_number: self.block.header.number,
-                        gas_limit: self.block.header.gas_limit,
+                        gas_limit: if args.gas_limit == 0 {
+                            self.block.header.gas_limit
+                        } else {
+                            args.gas_limit
+                        },
                         gas_used: self.block.header.gas_used,
-                        timestamp: self.block.header.timestamp,
-                        extra_data: self.block.header.extra_data.to_owned(),
+                        timestamp: if args.timestamp == 0 {
+                            self.block.header.timestamp
+                        } else {
+                            args.timestamp
+                        },
+                        extra_data: if args.extra == Bytes::new() {
+                            self.block.header.extra_data.to_owned()
+                        } else {
+                            args.extra
+                        },
                         base_fee_per_gas: self
                             .block
                             .header
                             .base_fee_per_gas
                             .map(|f| U256::from(f))
-                            .unwrap_or("1000000000".parse::<U256>().unwrap()),
+                            .unwrap_or(U256::from(0)),
                         block_hash,
                         transactions: raw_transactions.to_vec(),
                     },
@@ -70,7 +94,7 @@ impl BlockInfo {
             block_value: fees,
             blobs_bundle: BlobsBundleV1 { commitments: vec![], blobs: vec![], proofs: vec![] },
             should_override_builder: false,
-            parent_beacon_block_root: None,
+            parent_beacon_block_root: args.parent_beacon_block_root,
         }
     }
 }
@@ -175,7 +199,7 @@ impl From<Header> for PartialHeader {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "PascalCase")]
-pub struct BuildBlockArgs {
+pub struct SuavexBuildBlockArgs {
     pub slot: u64,
     // #[serde(deserialize_with = "base64_to_bytes")] // TODO: use serde macro so we can use Bytes instead of String
     pub proposer_pubkey: String,
