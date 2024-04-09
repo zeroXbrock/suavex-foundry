@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["BASE_FEE_RECIPIENT","L1_BLOCK_CONTRACT","L1_FEE_RECIPIENT"],"struct":["L1BlockInfo"]};

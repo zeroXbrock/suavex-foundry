@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["AddressIdentity","EtherscanIdentifier","LocalTraceIdentifier","SignaturesIdentifier"],"trait":["TraceIdentifier"],"type":["SingleSignaturesIdentifier"]};

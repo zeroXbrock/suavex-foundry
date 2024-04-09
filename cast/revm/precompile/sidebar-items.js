@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error","Precompile","PrecompileError","SpecId"],"fn":["calc_linear_cost_u32"],"mod":["primitives","utilities"],"struct":["Address","Bytes","HashMap","Log","PrecompileOutput","PrecompileWithAddress","Precompiles"],"type":["B256","EnvPrecompileFn","PrecompileResult","StandardPrecompileFn"]};

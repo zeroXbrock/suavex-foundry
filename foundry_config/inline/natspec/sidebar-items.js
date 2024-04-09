@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["apply","contract_root_node","get_fn_data","get_fn_docs","get_fn_name"],"struct":["NatSpec"]};

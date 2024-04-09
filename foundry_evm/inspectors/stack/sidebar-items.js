@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["update_state"],"macro":["call_inspectors_adjust_depth"],"struct":["InnerContextData","InspectorData","InspectorStack","InspectorStackBuilder"]};
