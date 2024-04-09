@@ -61,7 +61,7 @@ use anvil_core::{
     },
     types::{
         AnvilMetadata, EvmMineOptions, ForkedNetwork, Forking, Index, NodeEnvironment,
-        NodeForkConfig, NodeInfo, TransactionSuave, Work,
+        NodeForkConfig, NodeInfo, TransactionSuavex, Work,
     },
 };
 use anvil_rpc::{error::RpcError, response::ResponseResult};
@@ -2156,10 +2156,10 @@ impl EthApi {
         Ok(transactions)
     }
 
-    fn validate_signed_request(&self, tx: &TransactionSuave) -> Result<TypedTransaction> {
+    fn validate_signed_request(&self, tx: &TransactionSuavex) -> Result<TypedTransaction> {
         // TransactionRequest puts these in the 'other' field
 
-        let to_legacy = |txn: &TransactionSuave| TxLegacy {
+        let to_legacy = |txn: &TransactionSuavex| TxLegacy {
             chain_id: txn.chain_id.map(|cid| cid.to::<u64>()),
             nonce: txn.nonce.to::<u64>(),
             gas_price: txn.gas_price.unwrap_or_default().to::<u128>(),
@@ -2171,7 +2171,7 @@ impl EthApi {
             value: txn.value,
             input: txn.input.to_owned(),
         };
-        let to_eip2930 = |txn: &TransactionSuave| TxEip2930 {
+        let to_eip2930 = |txn: &TransactionSuavex| TxEip2930 {
             chain_id: txn.chain_id.unwrap_or_default().to::<u64>(),
             nonce: txn.nonce.to::<u64>(),
             gas_price: txn.gas_price.unwrap_or_default().to::<u128>(),
@@ -2194,7 +2194,7 @@ impl EthApi {
                     .collect(),
             ),
         };
-        let to_eip1559 = |tx: &TransactionSuave| TxEip1559 {
+        let to_eip1559 = |tx: &TransactionSuavex| TxEip1559 {
             chain_id: tx.chain_id.unwrap_or_default().to::<u64>(),
             nonce: tx.nonce.to::<u64>(),
             gas_limit: tx.gas.to::<u64>(),
@@ -2258,7 +2258,7 @@ impl EthApi {
     pub async fn suavex_build_eth_block(
         &self,
         args: Option<SuavexBuildBlockArgs>,
-        txs: Vec<TransactionSuave>,
+        txs: Vec<TransactionSuavex>,
     ) -> Result<ExecutionPayloadEnvelopeV3> {
         node_info!("suavex_buildEthBlock");
         let mut valid_txs = vec![];

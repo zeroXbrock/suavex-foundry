@@ -1,6 +1,6 @@
 use crate::{
     eth::subscription::SubscriptionId,
-    types::{EvmMineOptions, Forking, Index, TransactionSuave},
+    types::{EvmMineOptions, Forking, Index, TransactionSuavex},
 };
 use alloy_primitives::{Address, Bytes, TxHash, B256, B64, U256};
 use alloy_rpc_trace_types::geth::{GethDebugTracingOptions, GethDefaultTracingOptions};
@@ -176,7 +176,7 @@ pub enum EthRequest {
     SuavexCall(Address, String),
 
     #[cfg_attr(feature = "serde", serde(rename = "suavex_buildEthBlock"))]
-    SuavexBuildEthBlock(Option<SuavexBuildBlockArgs>, Vec<TransactionSuave>),
+    SuavexBuildEthBlock(Option<SuavexBuildBlockArgs>, Vec<TransactionSuavex>),
 
     #[cfg_attr(feature = "serde", serde(rename = "suavex_buildEthBlockFromBundles"))]
     SuavexBuildEthBlockFromBundles(SuavexBuildBlockArgs, Vec<SBundle>),

@@ -237,7 +237,7 @@ pub struct ForkedNetwork {
 /// Transaction object used in RPC (should be in alloy_rpc)
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TransactionSuave {
+pub struct TransactionSuavex {
     /// Hash
     pub hash: B256,
     /// Nonce
