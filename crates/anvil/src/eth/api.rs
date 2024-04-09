@@ -2218,8 +2218,6 @@ impl EthApi {
                     .collect(),
             ),
         };
-        // TODO: simplify this...
-        // see `self.validate_tx`
         let sig = tx
             .signature
             .map(|sig| {
@@ -2229,8 +2227,7 @@ impl EthApi {
                     alloy_primitives::Parity::Eip155(sig.v.to::<u64>()),
                 )
             })
-            .unwrap()
-            .unwrap();
+            .ok_or(BlockchainError::FailedToDecodeSignedTransaction)??;
         Ok(match tx.transaction_type {
             None => TypedTransaction::Legacy(Signed::new_unchecked(to_legacy(tx), sig, tx.hash)),
             Some(n) => match n.to::<u64>() {
