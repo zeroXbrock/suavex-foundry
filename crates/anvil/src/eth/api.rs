@@ -79,7 +79,12 @@ use foundry_evm::{
 };
 use futures::channel::{mpsc::Receiver, oneshot};
 use parking_lot::RwLock;
-use std::{collections::HashSet, future::Future, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 /// The client version: `anvil/v{major}.{minor}.{patch}`
 pub const CLIENT_VERSION: &str = concat!("anvil/v", env!("CARGO_PKG_VERSION"));
@@ -2261,6 +2266,7 @@ impl EthApi {
         txs: Vec<TransactionSuavex>,
     ) -> Result<ExecutionPayloadEnvelopeV3> {
         node_info!("suavex_buildEthBlock");
+        let start_time = Instant::now();
         let mut valid_txs = vec![];
         for tx in txs {
             let tx = self.validate_signed_request(&tx)?;
@@ -2278,11 +2284,13 @@ impl EthApi {
         let pool = self.validate_txs(&tx_bytes).await?;
         let block = self.backend.pending_block(pool).await;
 
-        Ok(block.execution_envelope(
+        let exec_envelope = block.execution_envelope(
             &tx_bytes,
             args.unwrap_or_default(),
             block.receipts[0].gas_used(),
-        ))
+        );
+        node_info!("suavex_buildEthBlock took {}ms", start_time.elapsed().as_millis());
+        Ok(exec_envelope)
     }
 
     pub async fn suavex_build_eth_block_from_bundles(
@@ -2291,6 +2299,7 @@ impl EthApi {
         bundles: Vec<SBundle>,
     ) -> Result<ExecutionPayloadEnvelopeV3> {
         node_info!("suavex_buildEthBlockFromBundles");
+        let start_time = Instant::now();
         let mut raw_transactions = Vec::new();
         let mut pool_transactions = Vec::new();
         for bundle in bundles {
@@ -2299,14 +2308,16 @@ impl EthApi {
             pool_transactions.extend(pool);
         }
         let block_info = self.backend.pending_block(pool_transactions.to_owned()).await;
-        Ok(block_info.execution_envelope(
+        let exec_envelope = block_info.execution_envelope(
             &raw_transactions,
             args,
             U256::from(
                 block_info.block.header.gas_used
                     * block_info.block.header.base_fee_per_gas.unwrap_or(0),
             ),
-        ))
+        );
+        node_info!("suavex_buildEthBlock took {}ms", start_time.elapsed().as_millis());
+        Ok(exec_envelope)
     }
 }
 
